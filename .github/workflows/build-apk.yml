@@ -1,0 +1,94 @@
+name: Build NeoVPN APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK and CMake
+        run: |
+          sdkmanager "ndk;27.0.12077973" "cmake;3.22.1"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Fetch upstream Android client
+        run: |
+          git clone --depth 1 --recursive --shallow-submodules \
+            https://github.com/MatsuriDayo/NekoBoxForAndroid.git upstream
+
+      - name: Rebrand app name to NeoVPN
+        run: |
+          cd upstream
+          if [ -f app/src/main/res/values/strings.xml ]; then
+            sed -i 's|<string name="app_name">[^<]*</string>|<string name="app_name">NeoVPN</string>|' app/src/main/res/values/strings.xml || true
+          fi
+
+      - name: Build debug APK
+        run: |
+          cd upstream
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+
+          APK="$(find upstream -name '*.apk' -path '*/debug/*' | grep -i universal | head -n 1 || true)"
+
+          if [ -z "$APK" ]; then
+            APK="$(find upstream -name '*.apk' -path '*/debug/*' | grep -i arm64 | head -n 1 || true)"
+          fi
+
+          if [ -z "$APK" ]; then
+            APK="$(find upstream -name '*.apk' -path '*/debug/*' | head -n 1 || true)"
+          fi
+
+          if [ -z "$APK" ]; then
+            echo "APK not found"
+            find upstream -name '*.apk' || true
+            exit 1
+          fi
+
+          cp "$APK" dist/NeoVPN.apk
+          ls -lh dist/NeoVPN.apk
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NeoVPN-Android
+          path: dist/NeoVPN.apk
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: neovpn-${{ github.run_number }}
+          name: NeoVPN build ${{ github.run_number }}
+          files: dist/NeoVPN.apk
+          generate_release_notes: false
